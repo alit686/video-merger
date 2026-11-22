@@ -1,0 +1,10 @@
+.next
+node_modules
+out
+build
+.data
+*.log
+.env
+.env.*
+!.env.example
+.DS_Store
