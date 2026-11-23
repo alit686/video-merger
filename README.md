@@ -28,18 +28,24 @@ turso db tokens create video-merger
 ### 2. اربط المستودع بـ Vercel
 
 1. ارفع المشروع إلى GitHub (أو GitLab/Bitbucket).
-2. في [Vercel Dashboard](https://vercel.com), اضغط **Add New → Project**.
-3. استورد المستودع.
-4. في **Build & Development Settings > Function Region** اختر منطقة قريبة.
+2. في [Vercel Dashboard](https://vercel.com), اضغط **Add New → Project** واستورد المستودع.
+3. ⚠️ **Root Directory** = `video-merger` (المستودع يضم مشروعين).
+4. **Framework Preset** = `Other`، و**Build Command**: اتركه فارغًا (لا يوجد بناء — `public/` ثابت و`api/` دوال).
 5. في **Environment Variables** أضف:
 
-| المتغير | القيمة |
-|---|---|
-| `TURSO_DATABASE_URL` | `turso://video-merger-<org>.turso.io` |
-| `TURSO_AUTH_TOKEN` | التوكن من الخطوة السابقة |
+| المتغير | القيمة | مطلوب |
+|---|---|---|
+| `TURSO_DATABASE_URL` | `libsql://<db>-<org>.turso.io` | ✅ |
+| `TURSO_AUTH_TOKEN` | توكن Turso | ✅ |
+| `CRON_SECRET` | نص عشوائي طويل (يحمي `/api/cron`) | مستحسن |
+| `MAX_SOURCES` | `3` | مستحسن (انظر الحدود أدناه) |
+| `SOURCE_MAX_MB` | `100` | مستحسن |
+| `OUTPUT_MAX_MB` | `120` | مستحسن |
 
-6. **لا** تحتاج لأي أمر بناء (الموقع HTML ثابت في `public/`).
-7. اضغط **Deploy**.
+6. اضغط **Deploy** (أول نشر ~1–2 دقيقة بسبب رفع ثنائيات ffmpeg).
+
+> `vercel.json` يضمّن `ffmpeg` و`ffprobe` (نسخة linux-x64) داخل حزمة الدوال عبر `includeFiles`،
+> ويضبط `maxDuration: 300` و`memory: 2048`.
 
 ### 3. جرّب API بـ curl بعد النشر
 
@@ -59,21 +65,27 @@ curl https://<your-domain>.vercel.app/api/jobs/<jobId>
 curl https://<your-domain>.vercel.app/api/jobs/<jobId>/video?download=1 -o merge.mp4
 ```
 
-### 4. الحدود التي يجب معرفتها (الخطة المجانية)
+### 4. الحدود التي يجب معرفتها
 
 | الحد | القيمة |
 |---|---|
-| **مدة الدالة** (Vercel Hobby) | 60s كحد أقصى ← **custom plan مطلوب** للدمج الطويل |
-| **مدة الدالة** (Vercel Pro) | 300s (5 دقائق) ← كافٍ لدمج قصير |
-| **حجم الطلب** (Hobby) | 10MB ← سينجح لروابط المصادر |
+| **مدة الدالة** (Hobby مع Fluid Compute) | 300 ثانية — يكفي `maxDuration: 300` |
+| **مدة الدالة** (Pro) | 300s افتراضيًا، وحتى 800s |
+| **حجم الطلب** | 4.5MB لكل طلب ← لذلك الرفع مقسّم إلى أجزاء 4MB |
+| **قرص `/tmp`** | ~512MB لكل دالة ← **أهم قيد عملي** |
+| **حجم الحزمة** (غير مضغوط) | 250MB (ffmpeg + ffprobe ≈ 152MB) |
 | **حجم قاعدة Turso** (مجاني) | 500MB قاعدة بيانات + 500MB تخزين Blob |
-| **عدد المقاطع** | 10 (قابل للضبط) |
-| **حجم المصدر** | 200MB لكل مقطع |
-| **حجم الناتج** | 150MB |
+| **عدد المقاطع** | 10 افتراضيًا (اضبطه على 3 على Vercel) |
+| **حجم المصدر** | 200MB لكل مقطع (اضبطه على 100 على Vercel) |
+| **حجم الناتج** | 150MB (اضبطه على 120 على Vercel) |
 | **إجمالي المدة** | 600 ثانية (10 دقائق) |
-| **صلاحية الملفات** | 24 ساعة (حذف تلقائي) |
+| **صلاحية الملفات** | 24 ساعة (حذف تلقائي عبر cron) |
 
-**ملاحظة Vercel:** للدمج الطويل (أكثر من 60 ثانية من المعالجة)، تحتاج إلى **Vercel Pro plan** أو Vercel Custom plan مع `maxDuration: 300` في `vercel.json`.
+> ⚠️ **قيد `/tmp`:** تُنزَّل كل المصادر إلى `/tmp` قبل الدمج. مجموع المصادر + ملف الناتج يجب أن يبقى
+> تحت ~450MB. على Vercel استخدم `MAX_SOURCES=3` و`SOURCE_MAX_MB=100` و`OUTPUT_MAX_MB=120`
+> (300 + 120 = 420MB). القيم الافتراضية الكبيرة مناسبة للتشغيل المحلي فقط.
+
+**ملاحظة Vercel:** `maxDuration: 300` يعمل على Hobby عند تفعيل Fluid Compute (الافتراضي للمشاريع الجديدة).
 
 ## 📡 توثيق API
 
@@ -181,9 +193,9 @@ vercel.json             ← تكوين النشر
 |---|---|---|---|
 | `TURSO_DATABASE_URL` | ✅ | — | رابط قاعدة Turso |
 | `TURSO_AUTH_TOKEN` | ✅ | — | توكن قاعدة Turso |
-| `MAX_SOURCES` | لا | `10` | أقصى عدد مقاطع |
-| `SOURCE_MAX_MB` | لا | `200` | أقصى حجم للمصدر (MB) |
-| `OUTPUT_MAX_MB` | لا | `150` | أقصى حجم للناتج (MB) |
+| `MAX_SOURCES` | لا | `10` | أقصى عدد مقاطع — استخدم `3` على Vercel (قيد `/tmp`) |
+| `SOURCE_MAX_MB` | لا | `200` | أقصى حجم للمصدر (MB) — استخدم `100` على Vercel |
+| `OUTPUT_MAX_MB` | لا | `150` | أقصى حجم للناتج (MB) — استخدم `120` على Vercel |
 | `MAX_TOTAL_DURATION_SEC` | لا | `600` | أقصى مدة إجمالية (ثوانٍ) |
 | `FFMPEG_PRESET` | لا | `medium` | preset ffmpeg |
 | `CRON_SECRET` | لا | — | إن ضُبط، يتطلب `Authorization: Bearer <secret>` على `/api/cron` |
